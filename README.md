@@ -41,7 +41,7 @@ async def test(flow, title, gen): # async function is also automatically support
     #support outside content generator, also can send text/html/redirect/file/json/form directly
     if gen:
         flow.tail['Content-Type']=...
-        flow.send=generator
+        flow.send=gen
     else:
         flow.send_json({'return':title})
 

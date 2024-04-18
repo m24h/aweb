@@ -250,7 +250,7 @@ class Flow:
         for k,v in self.tail.items():
             if not k:
                 continue
-            if isinstance(v, tuple) and isinstance(v, list):
+            if isinstance(v, tuple) or isinstance(v, list):
                 for t in v:
                     resp.write(b'{}: {}\r\n'.format(k, t or '', encoding='utf-8'))
             else:

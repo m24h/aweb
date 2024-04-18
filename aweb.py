@@ -35,8 +35,8 @@ async def test(flow, title, gen): # async function is also automatically support
     await asyncio.sleep(1)
     #support outside content generator, also can send text/html/redirect/file/json/form directly
     if gen:
-        flow.tail['Content-Type']=...
-        flow.send=gen
+        flow.tail['Content-Type']=...; charset=utf-8
+        flow.send=generator
     else:
         flow.send_json({'return':title})
 
@@ -166,7 +166,7 @@ def _send_file(fname):
             yield mv[:t]
 
 # micropython does not support async yield yet
-class AsyncGenRead:
+class _AsyncGenRead:
     def __init__(self, r):
         self.r=r
         
@@ -177,7 +177,7 @@ class AsyncGenRead:
         while t:=self.r.read(1024):
             return t
         raise StopAsyncIteration
-
+    
 class Flow:
     def __init__(self, r, w, limit):
         self.req=r
@@ -244,7 +244,7 @@ class Flow:
             self.send='!!! NOT FOUND !!!'
             self.status=404
             self.reason='NOROUTER'
-            self.tail['Content-Type']='text/plain'
+            self.tail['Content-Type']='text/plain; charset=utf-8'
         resp=self.resp
         resp.write(b'HTTP/1.0 {} {}\r\n'.format(self.status, self.reason, encoding='utf-8'))
         for k,v in self.tail.items():
@@ -324,7 +324,7 @@ class Flow:
     # return a async generator to retrieve bytes body using 'async for'
     def recv_bytes(self):
         if not hasattr(self, 'recv'):
-            self.recv=AsyncGenRead(self.req)
+            self.recv=_AsyncGenRead(self.req)
         return self.recv
         
     def set_cookie(self, name, value, path=None, domain=None, expires=None, \
@@ -351,13 +351,13 @@ class Flow:
         self._setcookie[name]=b'; Expires=Thu, 01 Jan 1970 00:00:01 GMT; Max-Age=0'
     
     def send_text(self, str, status=200, reason='OK'):
-        self.tail['Content-Type']='text/plain'
+        self.tail['Content-Type']='text/plain; charset=utf-8'
         self.send=str
         self.status=status
         self.reason=reason
         
     def send_html(self, str, status=200, reason='OK'):
-        self.tail['Content-Type']='text/html'
+        self.tail['Content-Type']='text/html; charset=utf-8'
         self.send=str
         self.status=status
         self.reason=reason
@@ -368,13 +368,13 @@ class Flow:
         self.reason='REDIR'
         
     def send_json(self, obj, status=200, reason='OK'):
-        self.tail['Content-Type']='application/json'
+        self.tail['Content-Type']='application/json; charset=utf-8'
         self.send=obj
         self.status=status
         self.reason=reason
 
     def send_form(self, obj, status=200, reason='OK'):
-        self.tail['Content-Type']='application/x-www-form-urlencoded'
+        self.tail['Content-Type']='application/x-www-form-urlencoded; charset=utf-8'
         self.send=obj
         self.status=status
         self.reason=reason
@@ -382,7 +382,7 @@ class Flow:
     def send_file(self, file, max_age=86400, status=200, reason='OK'):
         t=file.rsplit('.',1)
         t=t[1] if len(t)>1 else ''
-        self.tail['Content-Type']=minetype(t)
+        self.tail['Content-Type']=minetype(t)+'; charset=utf-8'
         if max_age is not None:
             self.tail['Cache-Control']='Max-Age={}'.format(max_age)
         self.send=_send_file(file)          
@@ -422,7 +422,7 @@ async def server(web, host='0.0.0.0', port=80, limit=1024, clients=10):
                         if hasattr(coro, 'send') and callable(coro.send):
                             await coro
                 except:
-                    w.write(b'HTTP/1.0 500 INTERR\r\nContent-Type: text/plain\r\n\r\n!!! Internal Error !!!')
+                    w.write(b'HTTP/1.0 500 INTERR\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n!!! Internal Error !!!')
                     await w.drain()
                     raise
                 else:

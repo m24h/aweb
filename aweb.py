@@ -327,7 +327,7 @@ class Flow:
             self.recv=_AsyncGenRead(self.req)
         return self.recv
         
-    def set_cookie(self, name, value, path=None, domain=None, expires=None, \
+    def set_cookie(self, name, value, *, path=None, domain=None, expires=None, \
                    max_age=None, secure=False, http_only=False, partitioned=False):
         t=bytearray()
         t.extend(url_encode(value))
@@ -350,14 +350,18 @@ class Flow:
     def del_cookie(self, name):
         self._setcookie[name]=b'; Expires=Thu, 01 Jan 1970 00:00:01 GMT; Max-Age=0'
     
-    def send_text(self, str, status=200, reason='OK'):
+    def send_text(self, str, *, max_age=None, status=200, reason='OK'):
         self.tail['Content-Type']='text/plain; charset=utf-8'
+        if max_age is not None:
+            self.tail['Cache-Control']='public, max-age={}'.format(max_age)        
         self.send=str
         self.status=status
         self.reason=reason
         
-    def send_html(self, str, status=200, reason='OK'):
+    def send_html(self, str, *, max_age=None, status=200, reason='OK'):
         self.tail['Content-Type']='text/html; charset=utf-8'
+        if max_age is not None:
+            self.tail['Cache-Control']='public, max-age={}'.format(max_age)        
         self.send=str
         self.status=status
         self.reason=reason
@@ -367,32 +371,34 @@ class Flow:
         self.status=302
         self.reason='REDIR'
         
-    def send_json(self, obj, status=200, reason='OK'):
+    def send_json(self, obj, *, status=200, reason='OK'):
         self.tail['Content-Type']='application/json; charset=utf-8'
+        self.tail['Cache-Control']='no-store'
         self.send=obj
         self.status=status
         self.reason=reason
 
-    def send_form(self, obj, status=200, reason='OK'):
+    def send_form(self, obj, *, status=200, reason='OK'):
         self.tail['Content-Type']='application/x-www-form-urlencoded; charset=utf-8'
+        self.tail['Cache-Control']='no-store'
         self.send=obj
         self.status=status
         self.reason=reason
         
-    def send_file(self, file, max_age=86400, status=200, reason='OK'):
+    def send_file(self, file, *, max_age=86400, status=200, reason='OK'):
         t=file.rsplit('.',1)
         t=t[1] if len(t)>1 else ''
         self.tail['Content-Type']=minetype(t)+'; charset=utf-8'
         if max_age is not None:
-            self.tail['Cache-Control']='Max-Age={}'.format(max_age)
+            self.tail['Cache-Control']='public, max-age={}'.format(max_age)
         self.send=_send_file(file)          
         self.status=status
         self.reason=reason
                 
-    def send_obj(self, obj, content_type, max_age=None, status=200, reason='OK'):
+    def send_obj(self, obj, content_type, *, max_age=None, status=200, reason='OK'):
         self.tail['Content-Type']=content_type
         if max_age is not None:
-            self.tail['Cache-Control']='Max-Age={}'.format(max_age)
+            self.tail['Cache-Control']='public, max-age={}'.format(max_age)
         self.send=obj          
         self.status=status
         self.reason=reason              

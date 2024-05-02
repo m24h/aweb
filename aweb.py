@@ -1,5 +1,5 @@
 '''
-A light-weight async http web server for light-weight usage. (not fully tested)
+A light-weight async http web server for light-weight usage. 
 Examples:
 
 import aweb
@@ -88,7 +88,7 @@ def url_encode(s, safe=False):
         if (b>=65 and b<=90) or (b>=97 and b<=122) or b==45 or b==46 or (b==47 and not safe) or b==95 or b==126:
             ret.append(b)
         else:
-            ret.extend(b'%{:02X}'.format(b))
+            ret.extend('%{:02X}'.format(b).encode('utf-8'))
     return ret
     
 def param_decode(ret, b):
@@ -159,29 +159,10 @@ class Web(list):
                 return t
         return None
 
-def _send_file(fname):
-    mv=memoryview(bytearray(1024))
-    with open(fname, 'rb') as f:
-        while t:=f.readinto(mv):
-            yield mv[:t]
-
-# micropython does not support async yield yet
-class _AsyncGenRead:
-    def __init__(self, r):
-        self.r=r
-        
-    def __aiter__(self):
-        return self
- 
-    async def __anext__(self):
-        while t:=self.r.read(1024):
-            return t
-        raise StopAsyncIteration
-    
 class Flow:
     def __init__(self, r, w, limit):
-        self.req=r
-        self.resp=w
+        self.r=r
+        self.w=w
         self.limit=limit
         self.var={} # for unspecified usage during whole flow
         
@@ -191,21 +172,21 @@ class Flow:
             t=int(t)
             if t>self.limit:
                 raise MemoryError('Out of limit size')
-            return await self.req.readexactly(t)
+            return await self.r.readexactly(t)
         else:
-            t=await self.req.read(self.limit)
+            t=await self.r.read(self.limit)
             if len(t)>=self.limit: # seems not end
                 raise MemoryError('Out of limit size')
             return t
    
     async def readlineb(self, mv):
-        r=self.req
+        r=self.r
         p=0
         limit=len(mv)
-        while p<limit and await r.readinto(mv[p:p+1]):
-            if mv[p]==0x0A:
+        while p<limit:
+            if not await r.readinto(mv[p:p+1]) or mv[p]==0x0A:
                 return bytes(mv[:p]).rstrip(b'\r\n')
-            p=p+1
+            p+=1
         raise MemoryError('Out of limit size')
         
     async def _start(self):
@@ -231,73 +212,43 @@ class Flow:
                     for v in t[1].split(b';'):
                         t=v.split(b'=', 1)
                         self.cookie[url_decode(t[0].strip())]=url_decode(t[1].strip()) if len(t)>1 else ''
-                continue
-            self.head[v]=t[1].strip().decode('utf-8') if len(t)>1 else ''
+            else:
+                self.head[v]=t[1].strip().decode('utf-8') if len(t)>1 else ''
         del mv
-        self.status=200
-        self.reason='OK'
         self.tail={'Connection':'Close'}
         self._setcookie={}
-
+        
     async def _finish(self):
+        w=self.w
         if not hasattr(self, 'send'):
-            self.send='!!! NOT FOUND !!!'
-            self.status=404
-            self.reason='NOROUTER'
-            self.tail['Content-Type']='text/plain; charset=utf-8'
-        resp=self.resp
-        resp.write(b'HTTP/1.0 {} {}\r\n'.format(self.status, self.reason, encoding='utf-8'))
+            w.write(b'HTTP/1.0 404 NOTFOUND\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n!!! NOT FOUND !!!')
+            await w.drain()
+            return
+        w.write(('HTTP/1.0 '+str(getattr(self, 'status', 200))+' '+getattr(self, 'reason', 'NA')+'\r\n').encode('utf-8'))
         for k,v in self.tail.items():
             if not k:
                 continue
             if isinstance(v, tuple) or isinstance(v, list):
                 for t in v:
-                    resp.write(b'{}: {}\r\n'.format(k, t or '', encoding='utf-8'))
+                    w.write(k.encode('utf-8')+b': '+(t or '').encode('utf-8')+b'\r\n')
             else:
-                resp.write(b'{}: {}\r\n'.format(k, v or '', encoding='utf-8'))
-        await resp.drain()
+                w.write(k.encode('utf-8')+b': '+(v or '').encode('utf-8')+b'\r\n')
         for k,v in self._setcookie.items():
-            if not k:
-                continue
-            resp.write(b'Set-Cookie: '+url_encode(k)+b'='+(v or b'')+b'\r\n')
-        resp.write(b'\r\n')
-        await resp.drain()
+            if k:
+                w.write(b'Set-Cookie: '+url_encode(k)+b'='+(v or b'')+b'\r\n')
+        w.write(b'\r\n')
+        await w.drain()
         send=self.send
         if isinstance(send, str):
-            resp.write(send.encode('utf-8'))
-            await resp.drain()
+            w.write(send.encode('utf-8'))
+            await w.drain()
         elif isinstance(send, bytes) or isinstance(send, bytearray) or isinstance(send, memoryview):
-            resp.write(send)
-            await resp.drain()
-        elif isinstance(send, dict):
-            resp.write(json.dumps(send, separators=(',', ':')).encode('utf-8'))
-            await resp.drain()
-        elif isinstance(send, list) or isinstance(send, tuple):
-            t=bytearray()
-            param_encode(t, send)
-            resp.write(t)
-            await resp.drain()
-        elif hasattr(send, '__aiter__') and callable(send.__aiter__):
-            async for v in send:
-                if isinstance(v, str):
-                    resp.write(v.encode('utf-8'))
-                else:
-                    resp.write(v)
-                await resp.drain()
-        elif hasattr(send, 'send') and callable(send.send):
-            for v in send:
-                if isinstance(v, str):
-                    resp.write(v.encode('utf-8'))
-                else:
-                    resp.write(v)
-                await resp.drain()
-        elif callable(send):
-            t=send()
-            if isinstance(t, str):
-                resp.write(t.encode('utf-8'))
-            else:
-                resp.write(t)
-            await resp.drain()
+            w.write(send)
+            await w.drain()
+        elif hasattr(send, 'send') and callable(send.send): # coro
+            await send
+        elif callable(send): # function
+            send()
     
     def query(self):
         if hasattr(self, '_query_b'):
@@ -320,25 +271,18 @@ class Flow:
             self.recv=[]
             param_decode(self.recv, t)
         return self.recv
-    
-    # return a async generator to retrieve bytes body using 'async for'
-    def recv_bytes(self):
-        if not hasattr(self, 'recv'):
-            self.recv=_AsyncGenRead(self.req)
-        return self.recv
         
     def set_cookie(self, name, value, *, path=None, domain=None, expires=None, \
                    max_age=None, secure=False, http_only=False, partitioned=False):
-        t=bytearray()
-        t.extend(url_encode(value))
+        t=bytearray(url_encode(value) if value else b'')
         if path:
-            t.extend(b'; Path={}'.format(path, encoding='utf-8'))
+            t.extend(b'; Path='+path.encode('utf-8'))
         if domain:
-            t.extend(b'; Domain={}'.format(domain, encoding='utf-8'))
+            t.extend(b'; Domain='+domain.encode('utf-8'))
         if expires:
-            t.extend(b'; Expires={}'.format(expires, encoding='utf-8'))
+            t.extend(b'; Expires='+expires.encode('utf-8'))
         if isinstance(max_age, int):
-            t.extend(b'; Max-Age={}'.format(max_age))
+            t.extend(b'; Max-Age='+str(max_age).encode('utf-8'))
         if secure:
             t.extend(b'; Secure')
         if http_only:
@@ -353,7 +297,7 @@ class Flow:
     def send_text(self, str, *, max_age=None, status=200, reason='OK'):
         self.tail['Content-Type']='text/plain; charset=utf-8'
         if max_age is not None:
-            self.tail['Cache-Control']='public, max-age={}'.format(max_age)        
+            self.tail['Cache-Control']='public, max-age='+str(max_age)        
         self.send=str
         self.status=status
         self.reason=reason
@@ -361,7 +305,7 @@ class Flow:
     def send_html(self, str, *, max_age=None, status=200, reason='OK'):
         self.tail['Content-Type']='text/html; charset=utf-8'
         if max_age is not None:
-            self.tail['Cache-Control']='public, max-age={}'.format(max_age)        
+            self.tail['Cache-Control']='public, max-age='+str(max_age)        
         self.send=str
         self.status=status
         self.reason=reason
@@ -370,38 +314,41 @@ class Flow:
         self.tail['Location']=url
         self.status=302
         self.reason='REDIR'
+        self.send=None
         
     def send_json(self, obj, *, status=200, reason='OK'):
         self.tail['Content-Type']='application/json; charset=utf-8'
         self.tail['Cache-Control']='no-store'
-        self.send=obj
+        self.send=json.dumps(obj, separators=(',', ':'))
         self.status=status
         self.reason=reason
 
     def send_form(self, obj, *, status=200, reason='OK'):
         self.tail['Content-Type']='application/x-www-form-urlencoded; charset=utf-8'
         self.tail['Cache-Control']='no-store'
-        self.send=obj
+        self.send=bytearray()
+        param_encode(self.send, obj)
         self.status=status
         self.reason=reason
+        
+    async def _send_file(self, file):
+        w=self.w
+        buf=bytearray(max(1024, self.limit))
+        mv=memoryview(buf)
+        with open(file, 'rb') as f:
+            while t:=f.readinto(buf):
+                w.write(mv[:t])
+                await w.drain()
         
     def send_file(self, file, *, max_age=86400, status=200, reason='OK'):
         t=file.rsplit('.',1)
         t=t[1] if len(t)>1 else ''
         self.tail['Content-Type']=minetype(t)+'; charset=utf-8'
         if max_age is not None:
-            self.tail['Cache-Control']='public, max-age={}'.format(max_age)
-        self.send=_send_file(file)          
+            self.tail['Cache-Control']='public, max-age='+str(max_age)
+        self.send=self._send_file(file)          
         self.status=status
-        self.reason=reason
-                
-    def send_obj(self, obj, content_type, *, max_age=None, status=200, reason='OK'):
-        self.tail['Content-Type']=content_type
-        if max_age is not None:
-            self.tail['Cache-Control']='public, max-age={}'.format(max_age)
-        self.send=obj          
-        self.status=status
-        self.reason=reason              
+        self.reason=reason             
                 
 #start a server listening, return an asyncio.Server object
 async def server(web, host='0.0.0.0', port=80, limit=1024, clients=10):
@@ -414,7 +361,6 @@ async def server(web, host='0.0.0.0', port=80, limit=1024, clients=10):
             try:
                 try:
                     await flow._start()
-                    ctn=True
                     if exe:=web.find(flow.path, ':before'):
                         coro=exe[4](flow, *(exe[5]), **(exe[6]))
                         if hasattr(coro, 'send') and callable(coro.send):
@@ -433,8 +379,6 @@ async def server(web, host='0.0.0.0', port=80, limit=1024, clients=10):
                     raise
                 else:
                     await flow._finish()
-            except OSError:
-                pass
             except asyncio.CancelledError:
                 pass
             except Exception as e:

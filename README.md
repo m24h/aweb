@@ -1,8 +1,7 @@
 # aweb
 
-A very light-weight HTTP Web async server.
+A very light-weight HTTP Web async server for micropython. (not tested in cpython)
 
-Not fully tested.
 
 Examples:
 

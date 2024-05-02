@@ -24,21 +24,16 @@ def after_all(flow):
         flow.send_file('web/404.html', status=404, reason='LOST')
 
 # in fact, more than one server with more path-router can be run at the same time
-# ssl is not supported, it's too expensive for most of DIYers, but it's also easy to be wrapped
 asyncio.get_event_loop().run_until_complete( \
     aweb.server(web, port=80, limit=1024, clients=5))
 asyncio.get_event_loop().run_until_complete( \
     aweb.server(web2, port=8080, limit=1024, clients=5))
 
-@web('test/*', 'get', "I'm robot", generator)
-async def test(flow, title, gen): # async function is also automatically supported
+@web('test/*', 'get', "I'm robot", 'tag1')
+async def test(flow, title, tag): # async function is also automatically supported
     await asyncio.sleep(1)
-    #support outside content generator, also can send text/html/redirect/file/json/form directly
-    if gen:
-        flow.tail['Content-Type']=...; charset=utf-8
-        flow.send=generator
-    else:
-        flow.send_json({'return':title})
+    flow.tail['My-TAG']=tag
+    flow.send_json({'return':title})
 
 # initialize other aync services
 
@@ -351,7 +346,7 @@ class Flow:
         self.reason=reason             
                 
 #start a server listening, return an asyncio.Server object
-async def server(web, host='0.0.0.0', port=80, limit=1024, clients=10):
+async def server(web, host='0.0.0.0', port=80, limit=1024, clients=10, ssl=None):
     clnt=0
     async def dispatcher(r, w):
         nonlocal clnt
@@ -390,4 +385,4 @@ async def server(web, host='0.0.0.0', port=80, limit=1024, clients=10):
             await w.wait_closed()
         except:
             pass
-    return await asyncio.start_server(dispatcher, host, port)
+    return await asyncio.start_server(dispatcher, host, port, ssl=ssl)

@@ -77,41 +77,49 @@ def url_decode(b):
         i=i+1
     return ret.decode('utf-8')
 
+_hex=b'0123456789ABCDEF'
+
 def url_encode(s, safe=False):
     ret=bytearray()
     for b in s.encode('utf-8'):
         if (b>=65 and b<=90) or (b>=97 and b<=122) or b==45 or b==46 or (b==47 and not safe) or b==95 or b==126:
             ret.append(b)
         else:
-            ret.extend('%{:02X}'.format(b).encode('utf-8'))
+            ret.append(37) # '%'
+            ret.append(_hex[b>>4])
+            ret.append(_hex[b&0x0F])
     return ret
     
-def param_decode(ret, b):
-    for kv in b.split(b'&'):
+# 'param' is a list in ((key1, value1), (key2, value2) ....) format
+# this function will decode 'application/x-www-form-urlencoded' bytes from 'ba' and append key-value pairs into 'param'
+def param_decode(param, ba):
+    for kv in ba.split(b'&'):
         kv=kv.split(b'=',1)
         if not kv[0]:
             continue
-        ret.append((url_decode(kv[0].strip()), url_decode(kv[1]) if len(kv)>1 else ''))
+        param.append((url_decode(kv[0].strip()), url_decode(kv[1].strip()) if len(kv)>1 else ''))
 
-def param_encode(ret, l):
-    for k,v in l:
+# 'param' should be in ((key1, value1), (key2, value2) ....) format, both tuple or list are acceptable
+# 'ba' is a bytearray to append 'application/x-www-form-urlencoded' encoded parameters
+def param_encode(ba, param):
+    for k,v in param:
         if not k:
             continue
-        if len(ret)>0:
-            ret.extend(b'&')
-        ret.extend(url_encode(k))
-        ret.extend(b'=')
-        ret.extend(url_encode(v or ''))
+        if len(ba)>0:
+            ba.extend(b'&')
+        ba.extend(url_encode(k))
+        ba.extend(b'=')
+        ba.extend(url_encode(v or ''))
         
-def param_get(tp, name):
-    for k,v in tp:
+def param_get(param, name):
+    for k,v in param:
         if k==name:
             return v
     return None
 
-def param_array(tp, name):
+def param_array(param, name):
     ret=[]
-    for k,v in tp:
+    for k,v in param:
         if k==name:
             ret.append(v)
     return ret
@@ -190,13 +198,13 @@ class Flow:
         t=t.split()
         if len(t)<3:
             raise ValueError('Bad protocol')
-        self.method=t[0].strip().decode('utf-8').lower()
-        v=t[2].strip().split(b'/', 1)
-        self.ver=v[1].strip().decode('utf-8') if len(v)>1 else '1.1'
-        t=t[1].strip().split(b'?', 1)
+        self.method=t[0].decode('utf-8').lower()
+        v=t[2].split(b'/', 1)
+        self.ver=v[1].decode('utf-8') if len(v)>1 else '1.1'
+        t=t[1].split(b'?', 1)
         v=t[0].replace(b'\\', b'/').split(b'/', 1)
-        self.path=url_decode(v[1]).strip().lower() if len(v)>1 else ''
-        self._query_b=t[1].rstrip().lstrip('? \t') if len(t)>1 else b''
+        self.path=url_decode(v[1]).lower() if len(v)>1 else ''
+        self._query_b=t[1].lstrip(b'?') if len(t)>1 else b''
         self.head={}
         self.cookie={}
         while t:=await self.readlineb(mv):
@@ -209,7 +217,6 @@ class Flow:
                         self.cookie[url_decode(t[0].strip())]=url_decode(t[1].strip()) if len(t)>1 else ''
             else:
                 self.head[v]=t[1].strip().decode('utf-8') if len(t)>1 else ''
-        del mv
         self.tail={'Connection':'Close'}
         self._setcookie={}
         
@@ -219,7 +226,7 @@ class Flow:
             w.write(b'HTTP/1.0 404 NOTFOUND\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n!!! NOT FOUND !!!')
             await w.drain()
             return
-        w.write(('HTTP/1.0 '+str(getattr(self, 'status', 200))+' '+getattr(self, 'reason', 'NA')+'\r\n').encode('utf-8'))
+        w.write(('HTTP/1.0 '+str(getattr(self, 'status', 200))+' '+str(getattr(self, 'reason', 'NA'))+'\r\n').encode('utf-8'))
         for k,v in self.tail.items():
             if not k:
                 continue
@@ -289,19 +296,19 @@ class Flow:
     def del_cookie(self, name):
         self._setcookie[name]=b'; Expires=Thu, 01 Jan 1970 00:00:01 GMT; Max-Age=0'
     
-    def send_text(self, str, *, max_age=None, status=200, reason='OK'):
+    def send_text(self, s, *, max_age=None, status=200, reason='OK'):
         self.tail['Content-Type']='text/plain; charset=utf-8'
         if max_age is not None:
             self.tail['Cache-Control']='public, max-age='+str(max_age)        
-        self.send=str
+        self.send=s
         self.status=status
         self.reason=reason
         
-    def send_html(self, str, *, max_age=None, status=200, reason='OK'):
+    def send_html(self, s, *, max_age=None, status=200, reason='OK'):
         self.tail['Content-Type']='text/html; charset=utf-8'
         if max_age is not None:
             self.tail['Cache-Control']='public, max-age='+str(max_age)        
-        self.send=str
+        self.send=s
         self.status=status
         self.reason=reason
         
@@ -318,6 +325,7 @@ class Flow:
         self.status=status
         self.reason=reason
 
+    # obj should be in ((key1, value1), (key2, value2) ...) format, both tuple or list are acceptable
     def send_form(self, obj, *, status=200, reason='OK'):
         self.tail['Content-Type']='application/x-www-form-urlencoded; charset=utf-8'
         self.tail['Cache-Control']='no-store'

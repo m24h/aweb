@@ -167,34 +167,39 @@ class Flow:
         self.r=r
         self.w=w
         self.limit=limit
-        self.var={} # for unspecified usage during whole flow
+        self.buf=b''
+        self.var={}   # for unspecified usage during whole flow
         
     async def readallb(self):
-        t=self.head.get('content-length')
-        if t:
+        if t:=self.head.get('content-length'):
             t=int(t)
             if t>self.limit:
                 raise MemoryError('Out of limit size')
-            return await self.r.readexactly(t)
+            buf=self.buf
+            self.buf=b''
+            if (t:=t-len(buf))>0:
+                buf+=await self.r.readexactly(t)
+            return buf
         else:
-            t=await self.r.read(self.limit)
-            if len(t)>=self.limit: # seems not end
-                raise MemoryError('Out of limit size')
-            return t
+            raise NotImplementedError('Unknown content length')
    
-    async def readlineb(self, mv):
-        r=self.r
-        p=0
-        limit=len(mv)
-        while p<limit:
-            if not await r.readinto(mv[p:p+1]) or mv[p]==0x0A:
-                return bytes(mv[:p]).rstrip(b'\r\n')
-            p+=1
-        raise MemoryError('Out of limit size')
+    async def readlineb(self):
+        buf=self.buf
+        while True:
+            if (t:=buf.find(b'\n'))>=0:
+                ret=buf[:t].rstrip(b'\r\n')
+                self.buf=buf[t+1:]
+                return ret
+            if (t:=self.limit-len(buf))<=0:
+                raise MemoryError('Out of limit size')
+            t=await self.r.read(t)
+            if not t:
+                self.buf=b''
+                return buf
+            buf+=t
         
     async def _start(self):
-        mv=memoryview(bytearray(self.limit))
-        t=await self.readlineb(mv)
+        t=await self.readlineb()
         t=t.split()
         if len(t)<3:
             raise ValueError('Bad protocol')
@@ -207,7 +212,7 @@ class Flow:
         self._query_b=t[1].lstrip(b'?') if len(t)>1 else b''
         self.head={}
         self.cookie={}
-        while t:=await self.readlineb(mv):
+        while t:=await self.readlineb():
             t=t.split(b':',1)
             v=t[0].strip().decode('utf-8').lower()
             if v=='cookie':
@@ -227,17 +232,21 @@ class Flow:
             await w.drain()
             return
         w.write(('HTTP/1.0 '+str(getattr(self, 'status', 200))+' '+str(getattr(self, 'reason', 'NA'))+'\r\n').encode('utf-8'))
+        await w.drain()
         for k,v in self.tail.items():
             if not k:
                 continue
             if isinstance(v, tuple) or isinstance(v, list):
                 for t in v:
                     w.write(k.encode('utf-8')+b': '+(t or '').encode('utf-8')+b'\r\n')
+                    await w.drain()
             else:
                 w.write(k.encode('utf-8')+b': '+(v or '').encode('utf-8')+b'\r\n')
+                await w.drain()
         for k,v in self._setcookie.items():
             if k:
                 w.write(b'Set-Cookie: '+url_encode(k)+b'='+(v or b'')+b'\r\n')
+                await w.drain()
         w.write(b'\r\n')
         await w.drain()
         send=self.send
@@ -299,7 +308,7 @@ class Flow:
     def send_text(self, s, *, max_age=None, status=200, reason='OK'):
         self.tail['Content-Type']='text/plain; charset=utf-8'
         if max_age is not None:
-            self.tail['Cache-Control']='public, max-age='+str(max_age)        
+            self.tail['Cache-Control']='public, max-age='+str(max_age)
         self.send=s
         self.status=status
         self.reason=reason
@@ -336,7 +345,7 @@ class Flow:
         
     async def _send_file(self, file):
         w=self.w
-        buf=bytearray(max(1024, self.limit))
+        buf=bytearray(self.limit)
         mv=memoryview(buf)
         with open(file, 'rb') as f:
             while t:=f.readinto(buf):

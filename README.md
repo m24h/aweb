@@ -39,6 +39,11 @@ async def test(flow, title, tag): # async function is also automatically support
     flow.tail['My-TAG']=tag
     flow.send_json({'return':title})
 
+# json wrapped function as web service
+@web.json('func1', 'post')
+def func1(a, b):  
+	return int(a)*int(b) # since values of web form are always strings 
+
 # initialize other aync services
 
 # loop all async services

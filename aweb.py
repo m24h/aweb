@@ -94,7 +94,7 @@ def url_encode(s, safe=False):
             ret.append(_hex[b&0x0F])
     return ret
     
-# 'param' is a list in ((key1, value1), (key2, value2) ....) format
+# 'param' is a list in [(key1, value1), (key2, value2) ....] format
 # this function will decode 'application/x-www-form-urlencoded' bytes from 'ba' and append key-value pairs into 'param'
 def param_decode(param, ba):
     for kv in ba.split(b'&'):
@@ -166,6 +166,28 @@ class Web(list):
             if (t[1]==p or (t[3] and p.startswith(t[1]))) and t[2]==m:
                 return t
         return None
+    
+    # decorator to specify a function as web routing
+    # this will wrap the function, using Flow.recv_json()/send_json() to get parameters/send result
+    # this is the easy way to make web services, and wrapped function knowns nothing about FLow
+    # if method is not 'post', it will try to parse and use query parameters
+    def json(self, *args, **kwargs):
+        def decorator(func):
+            async def wrap(flow, *args, **kwargs):
+                if flow.method=='get':
+                    j={}
+                    for k,v in flow.query():
+                        j[k]=v
+                else:
+                    j=await flow.recv_json()
+                j.update(kwargs)
+                r=func(*args, **j)
+                if hasattr(r, 'send') and callable(r.send): # coro
+                    r=await r
+                flow.send_json(r)
+            self(*args, **kwargs)(wrap)
+            return func
+        return decorator
 
 class Flow:
     def __init__(self, r, w, limit):

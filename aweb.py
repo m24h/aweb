@@ -42,9 +42,13 @@ asyncio.get_event_loop().run_forever()
 
 '''
 
-import asyncio
-import json
-import sys
+try:
+    import asyncio
+except ImportError:
+    import uasyncio as asyncio
+    
+from json import loads, dumps
+from sys import print_exception
 
 _minetypes={
     'css': 'text/css',
@@ -147,6 +151,7 @@ class Web(list):
             while i<n:
                 if self[i][0]<=order:
                     break
+                i+=1
             for m in method.split(','):
                 self.insert(i, (order, p, m.strip().lower(), wc, func, args, kwargs))
             return func
@@ -272,7 +277,7 @@ class Flow:
         if not hasattr(self, 'recv'):
             t=await self.readallb()
             t=t.decode('utf-8')
-            t=json.loads(t)
+            t=loads(t)
             self.recv=t
         return self.recv
                 
@@ -330,7 +335,7 @@ class Flow:
     def send_json(self, obj, *, status=200, reason='OK'):
         self.tail['Content-Type']='application/json; charset=utf-8'
         self.tail['Cache-Control']='no-store'
-        self.send=json.dumps(obj, separators=(',', ':'))
+        self.send=dumps(obj, separators=(',', ':'))
         self.status=status
         self.reason=reason
 
@@ -394,7 +399,7 @@ async def server(web, host='0.0.0.0', port=80, limit=1024, clients=10, ssl=None)
             except asyncio.CancelledError:
                 pass
             except Exception as e:
-                sys.print_exception(e)
+                print_exception(e)
             finally:
                 clnt=clnt-1
         try:
